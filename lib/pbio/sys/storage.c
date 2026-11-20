@@ -34,6 +34,42 @@ static struct {
 } download_state;
 
 /**
+ * Delay before saving changed data to flash, so a download that just finished
+ * is written in one go.
+ */
+#define PBSYS_STORAGE_SAVE_IDLE_TIMEOUT_MS (500)
+
+/**
+ * State of saving changed data to flash while the hub is idle.
+ */
+static struct {
+    /** Delay timer for the idle save. */
+    pbio_os_timer_t timer;
+    /** Whether the delay timer is running. */
+    bool timer_started;
+    /** Whether a write to flash is currently ongoing. */
+    bool write_in_progress;
+} save_state;
+
+/**
+ * Set when data changed and still has to be written to flash.
+ */
+static bool data_map_write_on_shutdown = false;
+
+static pbio_os_process_t pbsys_storage_write_process;
+static pbio_error_t pbsys_storage_write_process_thread(pbio_os_state_t *state, void *context);
+
+/**
+ * Starts writing the data map and all program data to flash.
+ */
+static void pbsys_storage_start_write(void) {
+    save_state.write_in_progress = true;
+    save_state.timer_started = false;
+    pbio_busy_count_up();
+    pbio_os_process_start(&pbsys_storage_write_process, pbsys_storage_write_process_thread, NULL);
+}
+
+/**
  * Polls storage system for timeouts.
  *
  * This should be called periodically.
@@ -46,6 +82,33 @@ void pbsys_storage_poll(void) {
             pbsys_status_clear(PBIO_PYBRICKS_STATUS_FILE_IO_IN_PROGRESS);
         }
     }
+
+    // Save changed data to flash as soon as the hub is idle again, instead of
+    // only on a clean shutdown. This keeps downloaded programs on the hub even
+    // if the battery is removed or the hub is switched off abruptly.
+    //
+    // Saving is postponed while a download is in progress or while a program
+    // uses the data.
+    if (!data_map_write_on_shutdown ||
+        save_state.write_in_progress ||
+        pbsys_status_test(PBIO_PYBRICKS_STATUS_USER_PROGRAM_RUNNING) ||
+        pbsys_status_test(PBIO_PYBRICKS_STATUS_FILE_IO_IN_PROGRESS) ||
+        pbsys_status_test(PBIO_PYBRICKS_STATUS_SHUTDOWN_REQUEST)) {
+        save_state.timer_started = false;
+        return;
+    }
+
+    if (!save_state.timer_started) {
+        save_state.timer_started = true;
+        pbio_os_timer_set(&save_state.timer, PBSYS_STORAGE_SAVE_IDLE_TIMEOUT_MS);
+        return;
+    }
+
+    if (!pbio_os_timer_is_expired(&save_state.timer)) {
+        return;
+    }
+
+    pbsys_storage_start_write();
 }
 
 /**
@@ -72,7 +135,6 @@ void pbsys_storage_poll(void) {
  *
  */
 static pbsys_storage_data_map_t *map;
-static bool data_map_write_on_shutdown = false;
 
 /**
  * Gets program size or the total size of the sequentially stored slots.
@@ -115,6 +177,19 @@ pbsys_storage_settings_t *pbsys_storage_settings_get_settings(void) {
  */
 void pbsys_storage_request_write(void) {
     data_map_write_on_shutdown = true;
+}
+
+/**
+ * Tests if the given slot holds a user program.
+ *
+ * @param [in]  slot    The slot index.
+ * @returns             True if the slot has a program, false otherwise.
+ */
+bool pbsys_storage_slot_has_program(uint8_t slot) {
+    if (slot >= PBSYS_CONFIG_STORAGE_NUM_SLOTS) {
+        return false;
+    }
+    return map->slot_info[slot].size > 0;
 }
 
 /**
@@ -360,11 +435,12 @@ void pbsys_storage_get_program_data(pbsys_main_program_t *program) {
 }
 
 /**
- * This process saves data on shutdown.
+ * Writes the data map and all program data to flash.
+ *
+ * This runs on a clean shutdown, and also while the hub is idle whenever data
+ * changed, so programs are not lost when power is removed abruptly.
  */
-static pbio_error_t pbsys_storage_deinit_process_thread(pbio_os_state_t *state, void *context) {
-
-    pbio_error_t err = PBIO_ERROR_AGAIN;
+static pbio_error_t pbsys_storage_write_process_thread(pbio_os_state_t *state, void *context) {
 
     static pbio_os_state_t sub;
 
@@ -375,12 +451,14 @@ static pbio_error_t pbsys_storage_deinit_process_thread(pbio_os_state_t *state, 
     write_size = sizeof(pbsys_storage_data_map_t) + pbsys_storage_get_used_program_data_size();
 
     // Write the data.
-    PBIO_OS_AWAIT(state, &sub, err = pbdrv_block_device_write_all(&sub, write_size));
+    PBIO_OS_AWAIT(state, &sub, pbdrv_block_device_write_all(&sub, write_size));
 
-    // Deinitialization done.
+    data_map_write_on_shutdown = false;
+    save_state.write_in_progress = false;
+
     pbio_busy_count_down();
 
-    PBIO_OS_ASYNC_END(err);
+    PBIO_OS_ASYNC_END(PBIO_SUCCESS);
 }
 
 /**
@@ -400,20 +478,23 @@ void pbsys_storage_init(void) {
     pbsys_storage_settings_apply_loaded_settings(&map->settings);
 }
 
-static pbio_os_process_t pbsys_storage_deinit_process;
-
 /**
  * Starts saving the user data from RAM to storage.
  */
 void pbsys_storage_deinit(void) {
+
+    // If a write is already ongoing, the data is being stored right now and
+    // the busy count keeps the shutdown waiting until it is done.
+    if (save_state.write_in_progress) {
+        return;
+    }
 
     // If writing not requested, don't write.
     if (!data_map_write_on_shutdown) {
         return;
     }
 
-    pbio_busy_count_up();
-    pbio_os_process_start(&pbsys_storage_deinit_process, pbsys_storage_deinit_process_thread, NULL);
+    pbsys_storage_start_write();
 }
 
 #endif // PBSYS_CONFIG_STORAGE

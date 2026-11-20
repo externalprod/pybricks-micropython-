@@ -21,7 +21,7 @@
  * parts of ::pbsys_storage_settings_t. When the stored version does not match,
  * the data is erased.
  */
-#define PBSYS_STORAGE_VERSION ('P' << 24 | 'B' << 16 | 0x0002)
+#define PBSYS_STORAGE_VERSION ('P' << 24 | 'B' << 16 | 0x0003)
 
 /**
  * Information about one code slot.

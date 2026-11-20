@@ -27,6 +27,7 @@
 #include <pbsys/light.h>
 #include <pbsys/main.h>
 #include <pbsys/status.h>
+#include <pbsys/storage.h>
 #include <pbsys/storage_settings.h>
 
 #define DEBUG 0
@@ -44,31 +45,41 @@ pbio_light_matrix_t *pbsys_hub_light_matrix;
 
 /**
  * Bitmaps for the idle UI digits, one per slot, one byte per row, with the
- * leftmost column in bit 4.
+ * leftmost column in bit 4. The glyphs are three columns wide and centred, so
+ * they stay slim on the 5x5 matrix instead of filling it completely.
  */
 static const uint8_t light_matrix_slot_digits[][5] = {
-    { 0x04, 0x0C, 0x04, 0x04, 0x1F }, // 1
-    { 0x0E, 0x11, 0x02, 0x04, 0x1F }, // 2
-    { 0x1F, 0x01, 0x0E, 0x01, 0x1F }, // 3
-    { 0x06, 0x0A, 0x12, 0x1F, 0x02 }, // 4
-    { 0x1F, 0x10, 0x1E, 0x01, 0x1E }, // 5
-    { 0x0E, 0x10, 0x1E, 0x11, 0x0E }, // 6
-    { 0x1F, 0x02, 0x04, 0x04, 0x04 }, // 7
-    { 0x0E, 0x11, 0x0E, 0x11, 0x0E }, // 8
-    { 0x0E, 0x11, 0x0F, 0x01, 0x0E }, // 9
+    { 0x0E, 0x0A, 0x0A, 0x0A, 0x0E }, // 0
+    { 0x04, 0x0C, 0x04, 0x04, 0x0E }, // 1
+    { 0x0E, 0x02, 0x0E, 0x08, 0x0E }, // 2
+    { 0x0E, 0x02, 0x0E, 0x02, 0x0E }, // 3
+    { 0x0A, 0x0A, 0x0E, 0x02, 0x02 }, // 4
+    { 0x0E, 0x08, 0x0E, 0x02, 0x0E }, // 5
+    { 0x0E, 0x08, 0x0E, 0x0A, 0x0E }, // 6
+    { 0x0E, 0x02, 0x04, 0x04, 0x04 }, // 7
+    { 0x0E, 0x0A, 0x0E, 0x0A, 0x0E }, // 8
+    { 0x0E, 0x0A, 0x0E, 0x02, 0x0E }, // 9
 };
 
 /**
- * Displays the idle UI as the selected slot number (1 to 9).
+ * Displays the idle UI as the selected slot number (0 to 9).
+ *
+ * Slots without a program are shown dimmed, so it is visible which slots are
+ * ready to run while every slot stays selectable for a download.
  *
  * @param brightness   Brightness (0--100%).
  */
 static void light_matrix_show_idle_ui(uint8_t brightness) {
 
-    // Slots are zero-based internally but shown to the user starting at 1.
+    // Slot numbers are shown as-is, so the hub matches the program names used
+    // on the host (slot 0 is program 0).
     uint8_t slot = pbsys_status_get_selected_slot();
     if (slot >= PBIO_ARRAY_SIZE(light_matrix_slot_digits)) {
         slot = 0;
+    }
+
+    if (!pbsys_storage_slot_has_program(slot)) {
+        brightness /= 4;
     }
 
     for (uint8_t r = 0; r < 5; r++) {
