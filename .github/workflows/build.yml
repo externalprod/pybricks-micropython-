@@ -156,15 +156,18 @@ jobs:
       run: |
         git -C size-data config user.name "CI"
         git -C size-data config user.email "team@pybricks.com"
+    # Fork builds only need the firmware artifact below. The size-data backfill
+    # needs a size-data branch seeded with an earlier build, so it stays off
+    # unless the repository sets the PYBRICKS_SIZE_DATA variable.
     - name: Build commits and publish size data (push)
-      if: github.event_name == 'push'
+      if: github.event_name == 'push' && vars.PYBRICKS_SIZE_DATA == 'true'
       env:
         # master cannot be force pushed, so an accidental bad commit is recorded
         # as a gap and only HEAD still has to build
         KEEP_GOING: ${{ github.ref == 'refs/heads/master' && '--keep-going' || '' }}
       run: uv run --no-sync .github/build-commits.py ${{ matrix.hub }} --publish $KEEP_GOING
     - name: Build commits without publishing size data (pull request)
-      if: github.event_name == 'pull_request'
+      if: github.event_name == 'pull_request' && vars.PYBRICKS_SIZE_DATA == 'true'
       run: uv run --no-sync .github/build-commits.py ${{ matrix.hub }}
     - name: Build firmware for upload
       run: |
