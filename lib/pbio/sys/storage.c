@@ -180,19 +180,6 @@ void pbsys_storage_request_write(void) {
 }
 
 /**
- * Tests if the given slot holds a user program.
- *
- * @param [in]  slot    The slot index.
- * @returns             True if the slot has a program, false otherwise.
- */
-bool pbsys_storage_slot_has_program(uint8_t slot) {
-    if (slot >= PBSYS_CONFIG_STORAGE_NUM_SLOTS) {
-        return false;
-    }
-    return map->slot_info[slot].size > 0;
-}
-
-/**
  * Erases user data, erases user program meta data and restores user settings
  * to default. Does not actually erase program data, but it becomes
  * inaccessible, thus effectively erased.

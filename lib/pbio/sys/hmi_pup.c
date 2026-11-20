@@ -27,7 +27,6 @@
 #include <pbsys/light.h>
 #include <pbsys/main.h>
 #include <pbsys/status.h>
-#include <pbsys/storage.h>
 #include <pbsys/storage_settings.h>
 
 #define DEBUG 0
@@ -64,9 +63,6 @@ static const uint8_t light_matrix_slot_digits[][5] = {
 /**
  * Displays the idle UI as the selected slot number (0 to 9).
  *
- * Slots without a program are shown dimmed, so it is visible which slots are
- * ready to run while every slot stays selectable for a download.
- *
  * @param brightness   Brightness (0--100%).
  */
 static void light_matrix_show_idle_ui(uint8_t brightness) {
@@ -76,10 +72,6 @@ static void light_matrix_show_idle_ui(uint8_t brightness) {
     uint8_t slot = pbsys_status_get_selected_slot();
     if (slot >= PBIO_ARRAY_SIZE(light_matrix_slot_digits)) {
         slot = 0;
-    }
-
-    if (!pbsys_storage_slot_has_program(slot)) {
-        brightness /= 4;
     }
 
     for (uint8_t r = 0; r < 5; r++) {

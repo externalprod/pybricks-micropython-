@@ -12,7 +12,6 @@
 #ifndef _PBSYS_STORAGE_H_
 #define _PBSYS_STORAGE_H_
 
-#include <stdbool.h>
 #include <stdint.h>
 
 #include <pbsys/config.h>
@@ -29,8 +28,6 @@ pbio_error_t pbsys_storage_set_user_data(uint32_t offset, const uint8_t *data, u
 pbio_error_t pbsys_storage_get_user_data(uint32_t offset, uint8_t **data, uint32_t size);
 
 void pbsys_storage_request_write(void);
-
-bool pbsys_storage_slot_has_program(uint8_t slot);
 
 #else
 
@@ -50,10 +47,6 @@ static inline pbio_error_t pbsys_storage_get_user_data(uint32_t offset, uint8_t 
 }
 
 static inline void pbsys_storage_request_write(void) {
-}
-
-static inline bool pbsys_storage_slot_has_program(uint8_t slot) {
-    return false;
 }
 
 #endif // PBSYS_CONFIG_STORAGE
