@@ -63,8 +63,8 @@ static void pbsys_status_update_flag(pbio_pybricks_status_flags_t status, bool s
 /**
  * Increments or decrements the currently active slot.
  *
- * It does not wrap around. This is safe to call even if the maximum or minimum
- * slot is already reached.
+ * Wraps around at the ends so every slot is always a single button press away.
+ * This is safe to call even if the maximum or minimum slot is already reached.
  *
  * @param [in]  increment   @c true for increment @c false for decrement
  */
@@ -73,12 +73,11 @@ void pbsys_status_increment_selected_slot(bool increment) {
     if (pbsys_status_test(PBIO_PYBRICKS_STATUS_FILE_IO_IN_PROGRESS)) {
         return;
     }
-    if (increment && pbsys_status.slot + 1 < PBSYS_CONFIG_HMI_NUM_SLOTS) {
-        pbsys_status.slot++;
+    if (increment) {
+        pbsys_status.slot = (pbsys_status.slot + 1) % PBSYS_CONFIG_HMI_NUM_SLOTS;
         pbsys_status_update_emit();
-    }
-    if (!increment && pbsys_status.slot > 0) {
-        pbsys_status.slot--;
+    } else {
+        pbsys_status.slot = (pbsys_status.slot + PBSYS_CONFIG_HMI_NUM_SLOTS - 1) % PBSYS_CONFIG_HMI_NUM_SLOTS;
         pbsys_status_update_emit();
     }
     #endif

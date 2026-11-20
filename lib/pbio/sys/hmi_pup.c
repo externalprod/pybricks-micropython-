@@ -43,15 +43,38 @@
 pbio_light_matrix_t *pbsys_hub_light_matrix;
 
 /**
- * Displays the idle UI. Has a square stop sign and selected slot on bottom row.
+ * Bitmaps for the idle UI digits, one per slot, one byte per row, with the
+ * leftmost column in bit 4.
+ */
+static const uint8_t light_matrix_slot_digits[][5] = {
+    { 0x04, 0x0C, 0x04, 0x04, 0x1F }, // 1
+    { 0x0E, 0x11, 0x02, 0x04, 0x1F }, // 2
+    { 0x1F, 0x01, 0x0E, 0x01, 0x1F }, // 3
+    { 0x06, 0x0A, 0x12, 0x1F, 0x02 }, // 4
+    { 0x1F, 0x10, 0x1E, 0x01, 0x1E }, // 5
+    { 0x0E, 0x10, 0x1E, 0x11, 0x0E }, // 6
+    { 0x1F, 0x02, 0x04, 0x04, 0x04 }, // 7
+    { 0x0E, 0x11, 0x0E, 0x11, 0x0E }, // 8
+    { 0x0E, 0x11, 0x0F, 0x01, 0x0E }, // 9
+};
+
+/**
+ * Displays the idle UI as the selected slot number (1 to 9).
  *
  * @param brightness   Brightness (0--100%).
  */
 static void light_matrix_show_idle_ui(uint8_t brightness) {
-    for (uint8_t r = 0; r < PBSYS_CONFIG_HMI_NUM_SLOTS; r++) {
-        for (uint8_t c = 0; c < PBSYS_CONFIG_HMI_NUM_SLOTS; c++) {
-            bool is_on = r < 3 && c > 0 && c < 4;
-            is_on |= (r == 4 && c == pbsys_status_get_selected_slot());
+
+    // Slots are zero-based internally but shown to the user starting at 1.
+    uint8_t slot = pbsys_status_get_selected_slot();
+    if (slot >= PBIO_ARRAY_SIZE(light_matrix_slot_digits)) {
+        slot = 0;
+    }
+
+    for (uint8_t r = 0; r < 5; r++) {
+        uint8_t row = light_matrix_slot_digits[slot][r];
+        for (uint8_t c = 0; c < 5; c++) {
+            bool is_on = (row & (1 << (4 - c))) != 0;
             pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r, c, is_on ? brightness : 0, true);
         }
     }
