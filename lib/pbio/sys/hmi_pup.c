@@ -45,26 +45,37 @@
 pbio_light_matrix_t *pbsys_hub_light_matrix;
 
 /**
- * Rows of the matrix used for the battery gauge, at the top.
+ * How long both arrows must be held before the battery gauge is shown.
  */
-#define LIGHT_MATRIX_BATTERY_ROWS (1)
+#define LIGHT_MATRIX_BATTERY_HOLD_MS (3000)
+
+/**
+ * How long the battery gauge stays visible.
+ */
+#define LIGHT_MATRIX_BATTERY_SHOW_MS (5000)
+
+/**
+ * Set while the battery gauge is on the display, so the idle UI is redrawn
+ * after the gauge goes away.
+ */
+static bool light_matrix_showing_battery;
 
 /**
  * Bitmaps for the idle UI digits, one per slot, one byte per row, with the
- * leftmost column in bit 4. The glyphs are three columns wide and centred, and
- * use only the rows below the battery gauge.
+ * leftmost column in bit 4. The glyphs are three columns wide and centred, so
+ * they stay slim on the 5x5 matrix instead of filling it completely.
  */
-static const uint8_t light_matrix_slot_digits[][5 - LIGHT_MATRIX_BATTERY_ROWS] = {
-    { 0x0E, 0x0A, 0x0A, 0x0E }, // 0
-    { 0x04, 0x0C, 0x04, 0x0E }, // 1
-    { 0x0E, 0x02, 0x08, 0x0E }, // 2
-    { 0x0E, 0x02, 0x0E, 0x02 }, // 3
-    { 0x0A, 0x0A, 0x0E, 0x02 }, // 4
-    { 0x0E, 0x08, 0x0E, 0x02 }, // 5
-    { 0x0E, 0x08, 0x0A, 0x0E }, // 6
-    { 0x0E, 0x02, 0x04, 0x04 }, // 7
-    { 0x0E, 0x0A, 0x0E, 0x0A }, // 8
-    { 0x0E, 0x0A, 0x0E, 0x02 }, // 9
+static const uint8_t light_matrix_slot_digits[][5] = {
+    { 0x0E, 0x0A, 0x0A, 0x0A, 0x0E }, // 0
+    { 0x04, 0x0C, 0x04, 0x04, 0x0E }, // 1
+    { 0x0E, 0x02, 0x0E, 0x08, 0x0E }, // 2
+    { 0x0E, 0x02, 0x0E, 0x02, 0x0E }, // 3
+    { 0x0A, 0x0A, 0x0E, 0x02, 0x02 }, // 4
+    { 0x0E, 0x08, 0x0E, 0x02, 0x0E }, // 5
+    { 0x0E, 0x08, 0x0E, 0x0A, 0x0E }, // 6
+    { 0x0E, 0x02, 0x04, 0x04, 0x04 }, // 7
+    { 0x0E, 0x0A, 0x0E, 0x0A, 0x0E }, // 8
+    { 0x0E, 0x0A, 0x0E, 0x02, 0x0E }, // 9
 };
 
 /**
@@ -94,14 +105,26 @@ static void light_matrix_show_battery(uint8_t brightness) {
 }
 
 /**
- * Displays the idle UI as the selected slot number (0 to 9), with the battery
- * charge as a bar across the top row.
+ * Displays the battery charge on an otherwise empty matrix.
+ */
+static void light_matrix_show_charge(void) {
+    light_matrix_show_battery(100);
+    for (uint8_t r = 1; r < 5; r++) {
+        for (uint8_t c = 0; c < 5; c++) {
+            pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r, c, 0, false);
+        }
+    }
+    light_matrix_showing_battery = true;
+}
+
+/**
+ * Displays the idle UI as the selected slot number (0 to 9).
  *
  * @param brightness   Brightness (0--100%).
  */
 static void light_matrix_show_idle_ui(uint8_t brightness) {
 
-    light_matrix_show_battery(brightness);
+    light_matrix_showing_battery = false;
 
     // Slot numbers are shown as-is, so the hub matches the program names used
     // on the host (slot 0 is program 0).
@@ -114,7 +137,7 @@ static void light_matrix_show_idle_ui(uint8_t brightness) {
         uint8_t row = light_matrix_slot_digits[slot][r];
         for (uint8_t c = 0; c < 5; c++) {
             bool is_on = (row & (1 << (4 - c))) != 0;
-            pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r + LIGHT_MATRIX_BATTERY_ROWS, c, is_on ? brightness : 0, false);
+            pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r, c, is_on ? brightness : 0, true);
         }
     }
 }
@@ -289,6 +312,53 @@ static bool bluetooth_is_enabled(void) {
     #endif // PBSYS_CONFIG_HMI_PUP_BLUETOOTH_BUTTON
 }
 
+#if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
+
+/**
+ * Waits for all buttons to be released, but shows the battery charge when both
+ * arrows are held long enough. This is also how a program start at the end of
+ * a user program is kept from doing anything until the buttons are released.
+ */
+static pbio_error_t arrow_hold_process(pbio_os_state_t *state) {
+
+    static pbio_os_timer_t timer;
+
+    const pbio_button_flags_t both = PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT;
+
+    PBIO_OS_ASYNC_BEGIN(state);
+
+    // Wait for the hold, restarting the timer whenever both arrows are not
+    // pressed. A release ends the wait as well.
+    pbio_os_timer_set(&timer, LIGHT_MATRIX_BATTERY_HOLD_MS);
+    PBIO_OS_AWAIT_UNTIL(state, ({
+        if (pbsys_status_test(PBIO_PYBRICKS_STATUS_SHUTDOWN_REQUEST)) {
+            return PBIO_ERROR_CANCELED;
+        }
+        pbio_button_flags_t pressed = pbdrv_button_get_pressed();
+        if ((pressed & both) != both) {
+            pbio_os_timer_reset(&timer);
+        }
+        !pressed || pbio_os_timer_is_expired(&timer);
+    }));
+
+    if ((pbdrv_button_get_pressed() & both) == both) {
+        light_matrix_show_charge();
+
+        // Stay visible for a few seconds, and for as long as the buttons
+        // remain held, so the gauge cannot flash by too quickly.
+        pbio_os_timer_set(&timer, LIGHT_MATRIX_BATTERY_SHOW_MS);
+        PBIO_OS_AWAIT_UNTIL(state, ({
+            if (pbsys_status_test(PBIO_PYBRICKS_STATUS_SHUTDOWN_REQUEST)) {
+                return PBIO_ERROR_CANCELED;
+            }
+            (pbdrv_button_get_pressed() & both) != both && pbio_os_timer_is_expired(&timer);
+        }));
+    }
+
+    PBIO_OS_ASYNC_END(PBIO_SUCCESS);
+}
+#endif // PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
+
 /**
  * The HMI is a loop running the following steps:
  *
@@ -331,14 +401,22 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
         pbio_os_timer_reset(&idle_timer);
 
         // Buttons could be pressed at the end of the user program, so wait for
-        // a release and then a new press, or until we have to exit early.
+        // a release and then a new press, or until we have to exit early. This
+        // wait also handles the both-arrows battery gauge shortcut.
         DEBUG_PRINT("Waiting for initial button release.\n");
+        #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
+        PBIO_OS_AWAIT(state, &sub, arrow_hold_process(&sub));
+        if (light_matrix_showing_battery) {
+            light_matrix_show_idle_ui(100);
+        }
+        #else
         PBIO_OS_AWAIT_WHILE(state, ({
             if (pbsys_status_test(PBIO_PYBRICKS_STATUS_SHUTDOWN_REQUEST)) {
                 return PBIO_ERROR_CANCELED;
             }
             pbdrv_button_get_pressed();
         }));
+        #endif
 
         DEBUG_PRINT("Start waiting for input.\n");
 
@@ -413,6 +491,14 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
         #endif // PBSYS_CONFIG_HMI_PUP_BLUETOOTH_BUTTON
 
         #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE
+        // Both arrows are the battery gauge shortcut, so do not also change
+        // the selected slot when they are pressed together.
+        if ((pbdrv_button_get_pressed() & (PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT)) ==
+            (PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT)) {
+            DEBUG_PRINT("Both arrows pressed, waiting for battery gauge.\n");
+            continue;
+        }
+
         // On right, increment slot when possible, then start waiting on new inputs.
         if (pbdrv_button_get_pressed() & PBIO_BUTTON_RIGHT) {
             pbsys_status_increment_selected_slot(true);
