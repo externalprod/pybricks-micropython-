@@ -59,7 +59,15 @@ void pbsys_program_stop_poll(void) {
 
     pbio_button_flags_t btn = pbdrv_button_get_pressed();
 
-    if (btn & PBSYS_CONFIG_HMI_STOP_BUTTON) {
+    #if defined(PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE) && PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE
+    // Centre plus right is the battery gauge shortcut on hubs with arrow
+    // buttons, so holding it must not power the hub off.
+    bool battery_shortcut = (btn & PBSYS_CONFIG_HMI_STOP_BUTTON) && (btn & PBIO_BUTTON_RIGHT);
+    #else
+    bool battery_shortcut = false;
+    #endif
+
+    if ((btn & PBSYS_CONFIG_HMI_STOP_BUTTON) && !battery_shortcut) {
         pbsys_status_set(PBIO_PYBRICKS_STATUS_POWER_BUTTON_PRESSED);
 
         // power off when button is held down for 2 seconds

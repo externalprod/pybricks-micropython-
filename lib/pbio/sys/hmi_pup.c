@@ -315,20 +315,21 @@ static bool bluetooth_is_enabled(void) {
 #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
 
 /**
- * Waits for all buttons to be released, but shows the battery charge when both
- * arrows are held long enough. This is also how a program start at the end of
- * a user program is kept from doing anything until the buttons are released.
+ * Waits for all buttons to be released, but shows the battery charge when the
+ * centre (power) button and the right arrow are held long enough. This is also
+ * how a program start at the end of a user program is kept from doing anything
+ * until the buttons are released.
  */
 static pbio_error_t arrow_hold_process(pbio_os_state_t *state) {
 
     static pbio_os_timer_t timer;
 
-    const pbio_button_flags_t both = PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT;
+    const pbio_button_flags_t both = PBSYS_CONFIG_HMI_STOP_BUTTON | PBIO_BUTTON_RIGHT;
 
     PBIO_OS_ASYNC_BEGIN(state);
 
-    // Wait for the hold, restarting the timer whenever both arrows are not
-    // pressed. A release ends the wait as well.
+    // Wait for the hold, restarting the timer whenever the shortcut buttons
+    // are not both pressed. A release ends the wait as well.
     pbio_os_timer_set(&timer, LIGHT_MATRIX_BATTERY_HOLD_MS);
     PBIO_OS_AWAIT_UNTIL(state, ({
         if (pbsys_status_test(PBIO_PYBRICKS_STATUS_SHUTDOWN_REQUEST)) {
@@ -377,6 +378,10 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
 
     static pbio_os_timer_t idle_timer;
 
+    #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
+    static pbio_os_timer_t chord_timer;
+    #endif
+
     // Used as a local variable in a few places, but the value needs to persist
     // during the async start advertising call.
     static bool should_advertise;
@@ -402,7 +407,7 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
 
         // Buttons could be pressed at the end of the user program, so wait for
         // a release and then a new press, or until we have to exit early. This
-        // wait also handles the both-arrows battery gauge shortcut.
+        // wait also handles the battery gauge shortcut.
         DEBUG_PRINT("Waiting for initial button release.\n");
         #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
         PBIO_OS_AWAIT(state, &sub, arrow_hold_process(&sub));
@@ -440,6 +445,14 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
             // Wait condition: button pressed, program start requested, or connection change.
             pbdrv_button_get_pressed() || pbsys_main_program_start_is_requested() || pbsys_hmi_handle_connection_change;
         }));
+
+        #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE && PBIO_CONFIG_LIGHT_MATRIX
+        // Give the second button of the shortcut a moment to register, so the
+        // hold works regardless of which of the two buttons is pressed first.
+        if (pbdrv_button_get_pressed() & (PBSYS_CONFIG_HMI_STOP_BUTTON | PBIO_BUTTON_RIGHT)) {
+            PBIO_OS_AWAIT_MS(state, &chord_timer, 100);
+        }
+        #endif
 
         // On setting or closing a connection, start from a clean slate:
         // Begin advertising if Bluetooth enabled and there is no host
@@ -491,11 +504,11 @@ static pbio_error_t run_ui(pbio_os_state_t *state) {
         #endif // PBSYS_CONFIG_HMI_PUP_BLUETOOTH_BUTTON
 
         #if PBSYS_CONFIG_HMI_PUP_LEFT_RIGHT_ENABLE
-        // Both arrows are the battery gauge shortcut, so do not also change
-        // the selected slot when they are pressed together.
-        if ((pbdrv_button_get_pressed() & (PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT)) ==
-            (PBIO_BUTTON_LEFT | PBIO_BUTTON_RIGHT)) {
-            DEBUG_PRINT("Both arrows pressed, waiting for battery gauge.\n");
+        // Centre plus right is the battery gauge shortcut, so do not also
+        // change the slot or start a program when they are pressed together.
+        if ((pbdrv_button_get_pressed() & (PBSYS_CONFIG_HMI_STOP_BUTTON | PBIO_BUTTON_RIGHT)) ==
+            (PBSYS_CONFIG_HMI_STOP_BUTTON | PBIO_BUTTON_RIGHT)) {
+            DEBUG_PRINT("Power and right pressed, waiting for battery gauge.\n");
             continue;
         }
 
