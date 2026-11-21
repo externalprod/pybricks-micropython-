@@ -17,8 +17,10 @@
 #include <pbdrv/led.h>
 #include <pbio/serial.h>
 
+#include <pbio/battery.h>
 #include <pbio/button.h>
 #include <pbio/busy_count.h>
+#include <pbio/int_math.h>
 #include <pbio/light_matrix.h>
 #include <pbio/os.h>
 
@@ -43,29 +45,63 @@
 pbio_light_matrix_t *pbsys_hub_light_matrix;
 
 /**
- * Bitmaps for the idle UI digits, one per slot, one byte per row, with the
- * leftmost column in bit 4. The glyphs are three columns wide and centred, so
- * they stay slim on the 5x5 matrix instead of filling it completely.
+ * Rows of the matrix used for the battery gauge, at the top.
  */
-static const uint8_t light_matrix_slot_digits[][5] = {
-    { 0x0E, 0x0A, 0x0A, 0x0A, 0x0E }, // 0
-    { 0x04, 0x0C, 0x04, 0x04, 0x0E }, // 1
-    { 0x0E, 0x02, 0x0E, 0x08, 0x0E }, // 2
-    { 0x0E, 0x02, 0x0E, 0x02, 0x0E }, // 3
-    { 0x0A, 0x0A, 0x0E, 0x02, 0x02 }, // 4
-    { 0x0E, 0x08, 0x0E, 0x02, 0x0E }, // 5
-    { 0x0E, 0x08, 0x0E, 0x0A, 0x0E }, // 6
-    { 0x0E, 0x02, 0x04, 0x04, 0x04 }, // 7
-    { 0x0E, 0x0A, 0x0E, 0x0A, 0x0E }, // 8
-    { 0x0E, 0x0A, 0x0E, 0x02, 0x0E }, // 9
+#define LIGHT_MATRIX_BATTERY_ROWS (1)
+
+/**
+ * Bitmaps for the idle UI digits, one per slot, one byte per row, with the
+ * leftmost column in bit 4. The glyphs are three columns wide and centred, and
+ * use only the rows below the battery gauge.
+ */
+static const uint8_t light_matrix_slot_digits[][5 - LIGHT_MATRIX_BATTERY_ROWS] = {
+    { 0x0E, 0x0A, 0x0A, 0x0E }, // 0
+    { 0x04, 0x0C, 0x04, 0x0E }, // 1
+    { 0x0E, 0x02, 0x08, 0x0E }, // 2
+    { 0x0E, 0x02, 0x0E, 0x02 }, // 3
+    { 0x0A, 0x0A, 0x0E, 0x02 }, // 4
+    { 0x0E, 0x08, 0x0E, 0x02 }, // 5
+    { 0x0E, 0x08, 0x0A, 0x0E }, // 6
+    { 0x0E, 0x02, 0x04, 0x04 }, // 7
+    { 0x0E, 0x0A, 0x0E, 0x0A }, // 8
+    { 0x0E, 0x0A, 0x0E, 0x02 }, // 9
 };
 
 /**
- * Displays the idle UI as the selected slot number (0 to 9).
+ * Gets the battery charge as a percentage, estimated from the pack voltage.
+ *
+ * The LEGO rechargeable pack is around 6.8 V when empty and 8.2 V when full,
+ * so this is a rough estimate rather than a real fuel gauge.
+ */
+static uint8_t light_matrix_get_battery_percentage(void) {
+    int32_t voltage = pbio_battery_get_average_voltage();
+    return (uint8_t)pbio_int_math_bind((voltage - 6800) * 100 / 1400, 0, 100);
+}
+
+/**
+ * Displays the battery charge in the top row, one pixel per 20%.
+ *
+ * @param brightness   Brightness (0--100%).
+ */
+static void light_matrix_show_battery(uint8_t brightness) {
+
+    // Round up, so a partially filled step still shows up.
+    uint8_t steps = (light_matrix_get_battery_percentage() + 19) / 20;
+
+    for (uint8_t c = 0; c < 5; c++) {
+        pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, 0, c, c < steps ? brightness : 0, false);
+    }
+}
+
+/**
+ * Displays the idle UI as the selected slot number (0 to 9), with the battery
+ * charge as a bar across the top row.
  *
  * @param brightness   Brightness (0--100%).
  */
 static void light_matrix_show_idle_ui(uint8_t brightness) {
+
+    light_matrix_show_battery(brightness);
 
     // Slot numbers are shown as-is, so the hub matches the program names used
     // on the host (slot 0 is program 0).
@@ -74,11 +110,11 @@ static void light_matrix_show_idle_ui(uint8_t brightness) {
         slot = 0;
     }
 
-    for (uint8_t r = 0; r < 5; r++) {
+    for (uint8_t r = 0; r < PBIO_ARRAY_SIZE(light_matrix_slot_digits[0]); r++) {
         uint8_t row = light_matrix_slot_digits[slot][r];
         for (uint8_t c = 0; c < 5; c++) {
             bool is_on = (row & (1 << (4 - c))) != 0;
-            pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r, c, is_on ? brightness : 0, true);
+            pbio_light_matrix_set_pixel(pbsys_hub_light_matrix, r + LIGHT_MATRIX_BATTERY_ROWS, c, is_on ? brightness : 0, false);
         }
     }
 }
